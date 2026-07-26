@@ -57,7 +57,9 @@ const NOKITCO_ADMIN_USERNAME = "nokitco.admin"
 const NOKITCO_ADMIN_EMAIL = `${NOKITCO_ADMIN_USERNAME}@users.bistec.internal`
 
 async function ensureTeam(name) {
-  const existing = await prisma.team.findUnique({ where: { name } })
+  // name uniqueness is scoped to live teams (partial index), so it's no longer
+  // a Prisma unique field — use findFirst, not findUnique.
+  const existing = await prisma.team.findFirst({ where: { name, isDeleted: false } })
   if (existing) return existing
   const created = await prisma.team.create({ data: { name } })
   console.log(`Created team "${name}" (${created.id})`)

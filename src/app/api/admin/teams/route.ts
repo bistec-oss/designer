@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { withSuperAdmin, parseBody } from '@/lib/api/handler'
@@ -37,18 +38,29 @@ export const POST = withSuperAdmin(async (req: NextRequest) => {
   if (body.response) return body.response
   const { name } = body.data
 
-  const existing = await prisma.team.findUnique({ where: { name } })
+  // Uniqueness is scoped to LIVE teams (partial unique index
+  // Team_name_active_key WHERE isDeleted = false), so a soft-deleted team's
+  // name is free to reuse. Check only non-deleted teams here; the partial
+  // index is the race-safe backstop (P2002 below).
+  const existing = await prisma.team.findFirst({ where: { name, isDeleted: false } })
   if (existing) {
     return NextResponse.json({ error: 'A team with this name already exists' }, { status: 409 })
   }
 
-  const team = await prisma.team.create({
-    data: { name },
-    select: { id: true, name: true, createdAt: true },
-  })
+  try {
+    const team = await prisma.team.create({
+      data: { name },
+      select: { id: true, name: true, createdAt: true },
+    })
 
-  return NextResponse.json(
-    { id: team.id, name: team.name, memberCount: 0, createdAt: team.createdAt.toISOString() } satisfies AdminTeamSummary,
-    { status: 201 },
-  )
+    return NextResponse.json(
+      { id: team.id, name: team.name, memberCount: 0, createdAt: team.createdAt.toISOString() } satisfies AdminTeamSummary,
+      { status: 201 },
+    )
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return NextResponse.json({ error: 'A team with this name already exists' }, { status: 409 })
+    }
+    throw err
+  }
 })

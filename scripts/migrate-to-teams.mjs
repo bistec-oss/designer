@@ -79,7 +79,7 @@ async function main() {
   console.log(`migrate-to-teams${DRY_RUN ? " (DRY RUN — no writes)" : ""}`)
 
   // ── Step 1: default team ────────────────────────────────────────────────
-  let team = await prisma.team.findUnique({ where: { name: TEAM_NAME } })
+  let team = await prisma.team.findFirst({ where: { name: TEAM_NAME, isDeleted: false } })
   if (team) {
     console.log(`  Team "${TEAM_NAME}" already exists (id=${team.id}) — reusing.`)
   } else if (DRY_RUN) {
