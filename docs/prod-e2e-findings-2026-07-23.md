@@ -75,7 +75,9 @@ A HOLD queue entry with `generateAt` 5 minutes in the past was created (201, PEN
 
 ---
 
-## ⚙️ Config gap found (not a bug) — CLI-mode teams need a `cli` COPY provider
+## ⚙️ Config gap found — CLI-mode teams need a `cli` COPY provider
+
+> **✅ RESOLVED 2026-07-27 — and it WAS a bug, in two layers.** Calling it "not a bug" here understated it: with no COPY provider a CLI-mode team could not generate at all, which is the product's core function. **PR #30** removed the server requirement (`copyProviderKey` optional in CLI mode); **PR #40** `21f95035` removed the matching **client** gate, which had kept the wizard's Generate button dead regardless — so between those two PRs the workaround below was still required even though the API no longer needed it. A team now needs **no COPY provider**. `scripts/seed-cli-provider.mjs` is legacy, and registering a `cli` row is no longer the fix. Original finding preserved below.
 
 Brief creation (`POST /api/briefs`) requires a `copyProviderKey` matching a team-scoped **enabled COPY provider**. The Claude Testing team had **zero** providers (`/api/providers/available?slot=COPY` → `[]`), so the brief wizard 400'd `copyProviderKey is required` — even though CLI mode + token are set (enhance/chat bypass this because they call the CLI token directly via `withClaudeAuth`). The `scripts/seed-cli-provider.mjs` only seeds the **Bistec** team.
 

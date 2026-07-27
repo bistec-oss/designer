@@ -1,13 +1,32 @@
 # bistec-studio — Session Handoff
 
-**Date:** 2026-07-27 (latest: found that **the deploy pipeline never applied migrations** — PR #38 was merged and deployed but its migration never ran. Fixed with a migrate-on-boot entrypoint.)
+**Date:** 2026-07-28 (latest: two fixes for one class of bug — a merged fix can be inert. **PR #39** made deploys apply migrations; **PR #40** removed the wizard's stale COPY-provider gate. Hearts Academy team, brand kit and the IRP campaign are now live on prod.)
 **Repo:** https://github.com/bistec-oss/studio (formerly `bistec-oss/designer`)
-**Branch:** `main` (PR #38 `b35d96bd` merged 2026-07-27, on top of PR #37 `fb8216c3`, PR #35 `d01ac4d2`, PR #36 `3dcac485`, prod-fix PR #30 `4e8e6e3e`, team-tenancy PR #29 `2a118a73`); new branch `fix/migrate-on-deploy`
+**Branch:** `main` — **PR #40** `21f95035` (brief-wizard CLI copy gate) on top of **PR #39** `16e1a069` (migrate on boot), **PR #38** `b35d96bd` (team-name reuse), PR #37 `fb8216c3`, PR #35 `d01ac4d2`, PR #36 `3dcac485`, prod-fix PR #30 `4e8e6e3e`, team-tenancy PR #29 `2a118a73`. All merged; no open branches.
 **Production:** `https://studio.bistecglobal.com`
 
 ---
 
-## ⏸️ 2026-07-27 (latest) — PICK UP HERE
+## ⏸️ 2026-07-28 (latest) — PICK UP HERE
+
+### The through-line: a merged, deployed, CI-green fix can be completely inert
+
+Two separate bugs this session, same shape — the fix existed but something downstream of it hadn't moved. Worth internalising before debugging anything else in this repo.
+
+|                             | Fix that existed                      | What still blocked it                                              | Resolved by           |
+| --------------------------- | ------------------------------------- | ------------------------------------------------------------------ | --------------------- |
+| Team name reuse             | PR #38 (partial unique index)         | **no deploy step ran migrations** — new code, old schema           | **PR #39** `16e1a069` |
+| Brief with no COPY provider | PR #30 (server made the key optional) | **the wizard kept its own gate** — button dead, request never sent | **PR #40** `21f95035` |
+
+Both were reported as "the fix didn't work". Both times the code was right and the _edge_ around it was wrong. **When a merged fix appears not to work: check the schema half of the release, and check whether the client carries a duplicate of the rule you changed.**
+
+### ✅ Open items after this session
+
+1. **🟠 B4 — scheduler resource not running** (unchanged from 2026-07-24). _And_ a second blocker discovered today: **neither prod team has a team Claude token**, and the scheduler resolves credentials with `userId: null`, so it has no personal tier. Fixing the Coolify resource alone will **not** make scheduled generation work — set a team token at `/team` too.
+2. **🟠 Both prod IMAGE providers are enabled but not `isDefault`** — `resolveImageProvider` tier 3 requires `isDefault`, so a teammate without a personal OpenAI key silently gets no AI background (generation still completes; it never throws).
+3. **Prove the new prod content works** — no post has been generated under IRP yet, so the Editorial Split layout and brand-kit voice prompt **v2** are both unproven against the design agent.
+4. **Confirm two inferred facts** in the IRP briefing — the contact block was read off the reference image, and "undergraduates" is inferred from its hook line.
+5. Remaining prod tests + wiping the kept **Claude Testing** data (see `CLAUDE.md`). The Hearts Academy team data is **real, not test data** — don't wipe it.
 
 ### 🔴 The deploy pipeline never ran migrations
 
@@ -25,9 +44,9 @@ Every past migration reached prod only because a human ran `npx prisma migrate d
 
 **Why the symptom survived the fix.** Prod still has the old `Team_name_key` — unique across **all** rows, soft-deleted included. The new code checks `findFirst({ name, isDeleted: false })`, finds nothing, calls `create`, Postgres rejects it on the old index, and the route maps P2002 → **409**. Identical user-facing error, one layer deeper. `Team_name_active_key` does not exist on prod.
 
-### The fix — branch `fix/migrate-on-deploy`
+### The fix — PR #39 `16e1a069` (merged + deployed)
 
-New **`docker-entrypoint.sh`**: `prisma migrate deploy` then `exec "$@"`. `ENTRYPOINT` added; `CMD` unchanged.
+New **`docker-entrypoint.sh`**: `prisma migrate deploy` then `exec "$@"`. `ENTRYPOINT` added; `CMD` unchanged. Plus `.gitattributes` pinning `*.sh` to LF — with `core.autocrlf=true` a Windows clone would check the entrypoint out as CRLF, and a CRLF shebang breaks the container the instant Docker copies it in. Linux CI never reproduces that, so it would only ever bite a Windows-local build.
 
 - **Both resources migrate.** The scheduler uses `command:` (not `entrypoint:`), so its override arrives as entrypoint args and still passes through. `migrate deploy` takes a Postgres **advisory lock**, so simultaneous app+scheduler boots serialize; the loser logs "No pending migrations to apply".
 - **Fails loud** (`set -e`). A failed migration fails the deploy and Coolify keeps the previous container serving — strictly better than serving new code against an old schema. Emergency override: `SKIP_MIGRATIONS=1` on the resource.
@@ -35,25 +54,84 @@ New **`docker-entrypoint.sh`**: `prisma migrate deploy` then `exec "$@"`. `ENTRY
 
 **Verified against the real image** (local `docker build` + throwaway Postgres, not reasoning): all 23 migrations applied on boot into a fresh DB → CMD reached (exit 0); `Team_name_active_key ... WHERE ("isDeleted" = false)` present and old `Team_name_key` gone; a soft-deleted "Hearts Academy" plus a live one coexist; a **second live** duplicate still rejected; second boot a clean no-op; `SKIP_MIGRATIONS=1` honoured; unreachable DB → CMD never runs, exit 1. No application code changed, so tsc/lint/unit are unaffected; CI's `docker build .` gate (`e2e.yml`) covers the image.
 
-### One-off to unblock prod before that branch ships
+**Outcome in prod:** merging triggered the webhook, the entrypoint applied `20260726120000_team_name_unique_active` on boot, and the **Hearts Academy team was created minutes later** — the name that had been permanently reserved. No manual step was needed.
 
-Coolify → app resource → Terminal:
-
-```sh
-cd /app && npx --yes prisma@5.22.0 migrate deploy
-```
-
-Works on the **current** image because `.dockerignore` keeps `prisma/`, so `prisma/migrations/**` is already baked in. Idempotent, and diagnostic: "Applying migration `20260726120000_team_name_unique_active`" confirms the diagnosis; "No pending migrations" would mean the cause is something else.
-
-### Then: create the Hearts Academy team
-
-Super admin → `/admin/teams` → create **Hearts Academy**. Note it is a **separate tenant** from the Bistec team: it starts with **zero brand kits**, and the existing Hearts Academy brand kit (rebuilt under the _Bistec_ team on 2026-07-26) stays invisible to it. Per the user's decision, the Hearts Academy kit is to be **rebuilt inside the new team** afterwards — 6 colours, Poppins + JetBrains Mono, 3 labelled logos (primary "BISTEC Hearts Academy"), 3627-char voice prompt; see the 2026-07-26 section below for the UI mechanics.
+> **One-off, for reference** (no longer necessary — kept because it's the fastest way to apply a migration without a redeploy). Coolify → app resource → Terminal: `cd /app && npx --yes prisma@5.22.0 migrate deploy`. Works on any current image because `.dockerignore` keeps `prisma/`, so `prisma/migrations/**` is baked in. Idempotent and diagnostic.
 
 ---
 
-## ⏸️ 2026-07-26 — PICK UP HERE
+## 2026-07-27 — PR #40: the brief wizard blocked generation with no COPY provider
 
-Two things happened this session; **the VPS/Coolify redeploy from 2026-07-24 below is still the one blocker** for the core render pipeline.
+**Reported as:** "in the current build if there is no team copy provider, the brief can't be generated." Correct — and the _second_ instance of a fix that only went half the distance. PR #30 had made `copyProviderKey` optional **server-side**; the wizard kept its own rule:
+
+- `src/app/(app)/brief/page.tsx:126` — `disabled={submitting || !wizard.copyProviderKey}` → button permanently dead
+- `src/components/brief/useBriefWizard.ts` — early return before any fetch
+- `src/components/brief/ReviewStep.tsx` — amber "an admin must add one in AI Providers"
+
+With no COPY row `pickDefault()` returns `''`, so all three fired and `POST /api/briefs` — which would have accepted the brief and defaulted copy to `claude -p` — was never called. On prod that meant **no brief could be created at all**, since neither team has a COPY provider.
+
+**Why a green E2E suite and local testing both missed it:** `scripts/seed-cli-provider.mjs` seeds a placeholder `cli` COPY row (`isDefault`) on the local Bistec team, so the gate always found something to pick; and `.env.test` runs `DESIGN_PROVIDER=claude-html` — API mode, where the gate is **correct**. It only surfaces on a team built without that legacy row. **Generalise this:** a seed script whose purpose is "make a gate pass" will hide that gate's bugs forever.
+
+**The fix — delete the duplicate rule, don't re-implement it.** `canSubmitBrief()` now lives beside `resolveBriefCopyKey` in `src/lib/brief/copyProvider.ts`, defined as the negation of that function's error case, so the button is live exactly when the route would accept the submission and the two cannot drift again. API mode still gates (there a missing key really is a 400). Also: send `copyProviderKey: undefined` rather than `''` so the route takes its CLI default instead of existence-checking an empty key; and fold `/api/me`'s loading state into `providersLoaded` so the warning doesn't flash before `cliMode` is known.
+
+**No change needed elsewhere:** design generation is selected by `DESIGN_PROVIDER`, not an `AvailableProvider` row (there is no DESIGN slot — only COPY and IMAGE), so it already defaulted to `claude -p`. Scheduler and MCP pass `copyProviderKey: 'env-default'`, which `resolveCopyProvider` treats as "no explicit choice" and falls through to the CLI default — harmless, though the marker outlives the env tier it was named for; renaming it would be misleading in API mode, where it correctly means "use the chain".
+
+**Gates:** tsc clean (the prop rename is compiler-enforced, so no call site can be silently missed) · lint 0 errors / 7 pre-existing warnings · **unit 322/322** (+4, one asserting `canSubmitBrief` agrees with `resolveBriefCopyKey` across every input combination) · production build green. **Not runtime-verified in a browser** — local masks the bug via the seeded row, so the proof is prod: open `/brief` under Hearts Academy (zero COPY providers) and a live **Generate Post** button is the fix.
+
+---
+
+## 2026-07-27 — Hearts Academy team, brand kit and the IRP campaign (prod)
+
+### The team
+
+Created at `/admin/teams` once the migration landed. **`cms3izrx90000t5ijbsepjstm`.** Note it is a **separate tenant** from the Bistec team: it started with zero brand kits, and the Hearts Academy brand kit that was rebuilt under _Bistec_ on 2026-07-26 is invisible to it.
+
+### The brand kit — `cms3jg09p000at5ijivpi3zhe`, team default
+
+Copied from the Bistec team's Hearts Academy kit **via the API, not by hand**: colours and fonts matched exactly, the voice prompt piped straight across (`===` asserted identical, 3627 chars) so there was no transcription risk.
+
+- **Its own logo objects.** The kit was created with **no `logoUrl`** so the first LOGO upload promoted itself to primary, giving objects under `brand-kits/cms3jg09p000at5ijivpi3zhe/` rather than references into the Bistec team's storage. The tenant boundary stays clean and deleting the Bistec kit can't break this one. Byte sizes verified identical to source (297761 / 62617 / 53638) and all three fetch 200 `image/png`.
+- **Source filenames preserved deliberately** (`hearts__hearts-academy-logo-transparent.png` etc.) — the voice prompt tells the model "the file names identify them", so renaming them would quietly break logo selection.
+- **Set as team default** (the source kit is not, because Bistec holds that slot in its own team). It is the only kit here, and without a default a brief that doesn't name a kit has nothing to resolve to.
+
+### Brand-kit voice prompt → v2 (v1 preserved under History)
+
+The reference creative for IRP contradicted the inherited prompt in four places, so the prompt was corrected at the **brand** level only — IRP-specific composition went into the campaign briefing instead, to avoid over-fitting the kit to one campaign:
+
+| v1 said                                                          | Reality / v2                                                                                                                             |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| "BISTEC Global **left**, Hearts Academy **right**"               | **reversed** — Hearts Academy left, per the actual published creative                                                                    |
+| "deep navy base flowing into organic green/teal **wave** shapes" | **teal-to-green gradient with a faint white graph-grid**; navy demoted to accent bands, panels, type surfaces                            |
+| "Hero graphic: schematic illustration, **never a screenshot**"   | **photography permitted** (real or generated), with a hard rule that type must never overlap it — own band/column/card, or a solid scrim |
+| "hashtags bottom-right"                                          | hashtags live in the caption; in-image only when there's no **contact footer**, now documented as a brand device                         |
+
+VOICE and PLATFORM were carried over **verbatim** (asserted in the script, not assumed).
+
+### Campaign — "Industry Readiness Programme (IRP)" `cms3kkxqt0011t5ijgd9urims`
+
+Kit override Hearts Academy, standalone (no project), no default tone. **Briefing v1 active, 3163 chars**, carrying:
+
+- **Naming** — full name on first caption mention, "IRP" thereafter and on-image; org always exactly "BISTEC Hearts Academy".
+- **⚠️ FACTS — DO NOT INVENT**, explicitly outranking every styling rule: no intake month, deadline, duration, fee, cohort size, placement number, partner name or testimonial unless that post's brief states it; absent a date, an open CTA ("Applications are open", "Enquire today") and never a named month. This was written _because_ the programme's real dates weren't supplied — it keeps posts honest instead of plausible.
+- **Layout — Editorial Split** (chosen over an immersive full-bleed hero and a contained-card variant): type and imagery never overlap, image in its own ~40% right band. Chosen specifically because the pipeline generates **one rectangular full-bleed** image and cannot produce the reference's cut-out student photo — so legibility is guaranteed by construction rather than by whatever gpt-image returns.
+- **Imagery** — candid workplace/lab/campus, subject off-centre right so it survives the tall narrow crop; no stock clichés, no text inside the image.
+- **Contact block** — the three details, as the _only_ permitted values.
+
+**Reference creative** attached as campaign document `irp-reference.png` (1.2 MB, stored unparsed). Note this grounds the **briefing assistant** via vision only — campaign documents never enter generation prompts, which is why the visual direction had to be written into the briefing as text.
+
+**⚠️ Two inferred facts to confirm:** the contact block (`076-8030-944`, `heartsacademy@bistecglobal.com`, `www.hearts.academy`) was read off the reference image, and "undergraduates" comes from its "Are you an Undergraduate?" hook — neither was supplied directly.
+
+**Unproven:** no post has been generated under IRP, so the Editorial Split and kit v2 have not met the design agent.
+
+---
+
+## 2026-07-26
+
+Two things happened this session. (The "VPS/Coolify redeploy is the one blocker" framing here was **wrong** — see the 2026-07-24 section below, which was already superseded at the time.)
+
+### 1. Prod Bistec-team brand kits rebuilt (via the browser UI)
+
+The prod **Bistec** team had **no brand kits** (they'd been cleaned up), so both local-machine kits were recreated under it, driven through the `/admin/brandkits` UI (chrome-devtools MCP) and verified field-by-field against the local DB via the prod API:
 
 ### 1. Prod Bistec-team brand kits rebuilt (via the browser UI)
 
@@ -373,8 +451,8 @@ Built in dependency order and merged to `main`; per-feature plans live in `docs/
 **Branch: `main`.** Each app user can now connect their **own Claude account**: they run `claude setup-token` on their own machine (no official third-party "Sign in with Claude" OAuth exists — the paste flow is the supported mechanism) and paste the `sk-ant-oat01-…` token at the new **`/settings`** page. In CLI mode (`DESIGN_PROVIDER=cli`) every Claude call the user triggers — copy, Path A/B design, regenerate copy/design, refine (incl. the background decision), briefing chat/enhance, post-brief enhance — then runs on **their** subscription. Gates: tsc clean, lint 0 errors (9 pre-existing warnings), **135/135 unit** (37 new), **full E2E 109 passed / 0 failed** (7 new §O cases in `settings-claude-token.test.ts`), Docker image builds.
 
 1. **Schema** (migration `20260707164417_user_claude_token`): `UserClaudeToken` 1:1 with `User` — `encryptedToken` (AES-256-GCM via `crypto.ts`), display-only `keyPrefix` (`…last4`), `status ACTIVE|INVALID`, `lastValidatedAt`. Mirrors the `AvailableProvider` secret pattern; ciphertext never leaves the server.
-2. **AsyncLocalStorage auth context, not signature threading.** `src/lib/agent/claudeAuth.ts` (ALS, zero app imports) + `src/lib/agent/userToken.ts` (resolver): routes wrap their model-calling span in `withUserClaudeAuth(user.userId, fn)`; the single spawn site `runClaudeCli` (`claudeCli.ts`) reads `currentClaudeAuth()`. Explicit threading would have touched 14+ signatures incl. the provider-agnostic `CopyProvider` interface. **Fail-safe default:** any caller that never enters the context — the scheduler worker, MCP/ACP, scripts — uses the shared credential, which is exactly the product decision (scheduled generations must never fail on a user's expired token; MCP/ACP are M2M).
-3. **Precedence per `claude -p` spawn:** ALS user token → shared `CLAUDE_CODE_OAUTH_TOKEN` → developer's logged-in session. Token travels via child env, never argv. `opts.authToken` is an explicit override used only by save-time validation (bypasses ALS, never retries).
+2. **AsyncLocalStorage auth context, not signature threading.** `src/lib/agent/claudeAuth.ts` (ALS, zero app imports) + `src/lib/agent/userToken.ts` (resolver): routes wrap their model-calling span in `withClaudeAuth(userId, teamId, fn)`; the single spawn site `runClaudeCli` (`claudeCli.ts`) reads `currentClaudeAuth()`. Explicit threading would have touched 14+ signatures incl. the provider-agnostic `CopyProvider` interface. ~~**Fail-safe default:** any caller that never enters the context — the scheduler worker, MCP/ACP, scripts — uses the shared credential.~~ **Superseded (team tenancy):** the wrapper is `withClaudeAuth` and takes a teamId; the scheduler and MCP call `withClaudeAuth(null, teamId, …)`, which resolves the **team** token — there is no shared-env credential to fall back to, so those paths **hard-fail without a team token set at `/team`**. The product intent (scheduled generation must not depend on one user's expiring token) still holds, but it is now the team token that carries it.
+3. **Precedence per `claude -p` spawn:** ~~ALS user token → shared `CLAUDE_CODE_OAUTH_TOKEN` → developer's logged-in session.~~ **Superseded by team tenancy (re-verified in code 2026-07-27):** exactly **two tiers, personal token → team token**, with **no** env or dev-session fallback — a spawn with neither hard-fails in `runClaudeCliOnce`. Token travels via child env, never argv. `opts.authToken` is an explicit override used only by save-time validation (bypasses ALS, never retries).
 4. **Retry-once on auth failure:** a non-zero exit is now a typed `ClaudeCliError` (exit code + stderr/stdout); `isClaudeAuthFailure()` (exported, conservative regex — timeouts/ENOENT/buffer are plain `Error`s and never match) triggers: mark the row INVALID (`updateMany`, idempotent) → retry the same call ONCE on the shared credential so the user's work completes. Second failure propagates; non-auth failures never retry.
 5. **API:** `GET/PUT/DELETE /api/me/claude-token` (all `withAuth`, self-service, keyed to the session user). PUT: zod shape guard (`sk-ant-oat01-` + ≥20 chars) → `validateClaudeToken` — live `claude -p` haiku ping in CLI mode (fail closed), `mockClaudeTokenValidation` seam under `MOCK_AI` (token containing "invalid" → 422), `{ok, skipped}` in API mode (stored dormant) — → upsert. `GET /api/me` now also returns `cliMode` + masked `claudeToken` state (threaded through `useCurrentUser`).
 6. **UI:** `/settings` page (new nav item, all roles) with `ClaudeTokenCard` — status pill, numbered `claude setup-token` instructions, password-type paste field, Connect/Replace/Disconnect (`useConfirm`), amber reconnect banner on INVALID, API-mode informational note. `ClaudeTokenPrompt` — dismissible post-login banner in `AppShell` (CLI mode only), per-user + per-state dismissal (`localStorage`), so a token going INVALID re-surfaces it.
@@ -733,7 +811,7 @@ MOCK_SOCIAL=true
 - `src/providers/implementations/copy/claude-cli.ts` — `ClaudeCliCopyProvider` (copy via CLI). Wired into `registry.ts` as the `cli` case; `providerApiKey()` skips `decrypt()` for the keyless `cli` provider.
 - `src/lib/agent/designAgentCli.ts` — `runDesignAgentCli()`: single-shot `claude -p` → HTML → `renderHtmlToPng` (Puppeteer) → MinIO `BUCKET_EXPORTS` → real `exportUrl`. Replaces the Anthropic tool-use loop (`runDesignAgent`) in CLI mode only.
 - `src/app/api/generate/assemble-a|b/route.ts` — branch on `CLI_MODE` (`DESIGN_PROVIDER === 'cli'`): CLI path vs. the untouched API path.
-- `scripts/seed-cli-provider.mjs` — idempotently registers a default COPY `AvailableProvider` `{providerKey:"cli", providerName:"cli", label:"Claude CLI (local, no API key)"}` so the wizard's Generate is enabled and `/api/briefs` validation passes. Run: `node --env-file=.env scripts/seed-cli-provider.mjs`.
+- `scripts/seed-cli-provider.mjs` — idempotently registers a default COPY `AvailableProvider` `{providerKey:"cli", providerName:"cli", label:"Claude CLI (local, no API key)"}`. ~~Needed so the wizard's Generate is enabled and `/api/briefs` validation passes.~~ **LEGACY as of PR #30 + PR #40 (2026-07-27):** CLI mode needs no COPY provider at either layer. The row still resolves harmlessly, but it **masks provider-gating bugs** — it is precisely why PR #40's dead Generate button never reproduced locally. Don't seed it on a team you intend to test gating with.
 - **Images:** CLI mode has no raster-image API — visuals are CSS/SVG authored by Claude and rasterized by Puppeteer. True raster generation (e.g. DALL·E) still needs an IMAGE provider + key.
 - **Template size limit:** single-shot prompts can't carry a giant template. The seeded **"Hearts Talk 1080×1080"** template is 1.81 MB (~475k tokens) and fails with the size guard (it would also exceed the API's 200k context). Use a normal-sized template — a **"Simple Gradient Card"** template was added to the Bistec kit for Path A testing.
 
