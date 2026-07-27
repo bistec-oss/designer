@@ -39,7 +39,7 @@ enum TeamRole { ADMIN EDITOR }
 
 model Team {
   id                   String   @id @default(cuid())
-  name                 String   @unique
+  name                 String   @unique  // ⚠ REVISED 2026-07-26 (PR #38): no longer @unique — uniqueness scoped to live teams via a partial index (Team_name_active_key WHERE isDeleted=false, migration 20260726120000) so a deleted team's name can be reused
   isDeleted            Boolean  @default(false)
   deletedAt            DateTime?
   createdAt            DateTime @default(now())

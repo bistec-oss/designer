@@ -1,13 +1,86 @@
 # bistec-studio — Session Handoff
 
-**Date:** 2026-07-24 (latest: two feature PRs merged to `main`; prod deploy topology mapped — VPS/Coolify redeploy is the one remaining blocker)
+**Date:** 2026-07-27 (latest: found that **the deploy pipeline never applied migrations** — PR #38 was merged and deployed but its migration never ran. Fixed with a migrate-on-boot entrypoint.)
 **Repo:** https://github.com/bistec-oss/studio (formerly `bistec-oss/designer`)
-**Branch:** `main` (PR #35 `d01ac4d2` + PR #36 `3dcac485` merged on top of prod-fix PR #30 `4e8e6e3e` and team-tenancy PR #29 `2a118a73`)
+**Branch:** `main` (PR #38 `b35d96bd` merged 2026-07-27, on top of PR #37 `fb8216c3`, PR #35 `d01ac4d2`, PR #36 `3dcac485`, prod-fix PR #30 `4e8e6e3e`, team-tenancy PR #29 `2a118a73`); new branch `fix/migrate-on-deploy`
 **Production:** `https://studio.bistecglobal.com`
 
 ---
 
-## ⏸️ 2026-07-24 (latest) — PICK UP HERE
+## ⏸️ 2026-07-27 (latest) — PICK UP HERE
+
+### 🔴 The deploy pipeline never ran migrations
+
+**Reported symptom:** still couldn't create a team named "Hearts Academy" on prod, even though PR #38 supposedly fixed exactly that.
+
+**What was already true.** PR #38 **is merged** — `b35d96bd` on `main`, checks green (unit ✅ build ✅ e2e ✅). The GHCR image built and **both Coolify redeploy webhooks returned success** (run `30287735245`, 17:06 UTC 2026-07-27). Prod runs the new **code**.
+
+**The actual gap.** Nothing in the deploy path applies migrations:
+
+- `Dockerfile` ended at `CMD ["node", "server.js"]` — no `ENTRYPOINT`, no `prisma migrate deploy`.
+- `docker-publish.yml` builds, pushes, pings Coolify. No migration step.
+- `docker-compose.yml` has no migration service.
+
+Every past migration reached prod only because a human ran `npx prisma migrate deploy` by hand — that's what all those "⚠️ Deploy:" notes throughout this file were really asking for. For #38 nobody did.
+
+**Why the symptom survived the fix.** Prod still has the old `Team_name_key` — unique across **all** rows, soft-deleted included. The new code checks `findFirst({ name, isDeleted: false })`, finds nothing, calls `create`, Postgres rejects it on the old index, and the route maps P2002 → **409**. Identical user-facing error, one layer deeper. `Team_name_active_key` does not exist on prod.
+
+### The fix — branch `fix/migrate-on-deploy`
+
+New **`docker-entrypoint.sh`**: `prisma migrate deploy` then `exec "$@"`. `ENTRYPOINT` added; `CMD` unchanged.
+
+- **Both resources migrate.** The scheduler uses `command:` (not `entrypoint:`), so its override arrives as entrypoint args and still passes through. `migrate deploy` takes a Postgres **advisory lock**, so simultaneous app+scheduler boots serialize; the loser logs "No pending migrations to apply".
+- **Fails loud** (`set -e`). A failed migration fails the deploy and Coolify keeps the previous container serving — strictly better than serving new code against an old schema. Emergency override: `SKIP_MIGRATIONS=1` on the resource.
+- **One extra image layer: `COPY --from=builder /app/node_modules/prisma`.** `prisma` is a devDependency, so the runner's `npm ci --omit=dev` skips it — and that stage's `--ignore-scripts` would in any case leave `@prisma/engines` without downloaded binaries. Taking the CLI from the builder (full `npm ci`, scripts run) pairs it with the linux-musl `schema-engine` already carried by the `@prisma` scope copy. Invoked as `node node_modules/prisma/build/index.js` — **not** `npx`, which would hit the registry on every boot.
+
+**Verified against the real image** (local `docker build` + throwaway Postgres, not reasoning): all 23 migrations applied on boot into a fresh DB → CMD reached (exit 0); `Team_name_active_key ... WHERE ("isDeleted" = false)` present and old `Team_name_key` gone; a soft-deleted "Hearts Academy" plus a live one coexist; a **second live** duplicate still rejected; second boot a clean no-op; `SKIP_MIGRATIONS=1` honoured; unreachable DB → CMD never runs, exit 1. No application code changed, so tsc/lint/unit are unaffected; CI's `docker build .` gate (`e2e.yml`) covers the image.
+
+### One-off to unblock prod before that branch ships
+
+Coolify → app resource → Terminal:
+
+```sh
+cd /app && npx --yes prisma@5.22.0 migrate deploy
+```
+
+Works on the **current** image because `.dockerignore` keeps `prisma/`, so `prisma/migrations/**` is already baked in. Idempotent, and diagnostic: "Applying migration `20260726120000_team_name_unique_active`" confirms the diagnosis; "No pending migrations" would mean the cause is something else.
+
+### Then: create the Hearts Academy team
+
+Super admin → `/admin/teams` → create **Hearts Academy**. Note it is a **separate tenant** from the Bistec team: it starts with **zero brand kits**, and the existing Hearts Academy brand kit (rebuilt under the _Bistec_ team on 2026-07-26) stays invisible to it. Per the user's decision, the Hearts Academy kit is to be **rebuilt inside the new team** afterwards — 6 colours, Poppins + JetBrains Mono, 3 labelled logos (primary "BISTEC Hearts Academy"), 3627-char voice prompt; see the 2026-07-26 section below for the UI mechanics.
+
+---
+
+## ⏸️ 2026-07-26 — PICK UP HERE
+
+Two things happened this session; **the VPS/Coolify redeploy from 2026-07-24 below is still the one blocker** for the core render pipeline.
+
+### 1. Prod Bistec-team brand kits rebuilt (via the browser UI)
+
+The prod **Bistec** team had **no brand kits** (they'd been cleaned up), so both local-machine kits were recreated under it, driven through the `/admin/brandkits` UI (chrome-devtools MCP) and verified field-by-field against the local DB via the prod API:
+
+- **Bistec** (set as **default**): 6 colours, fonts Poppins + JetBrains Mono, **3 labelled logos** (primary = "BISTEC Global — full logo (colour)"), "Simple Gradient Card" SQUARE template, active voice prompt (2217 chars).
+- **Hearts Academy** (not default): 6 colours, same 2 fonts, **3 labelled logos** (primary = "BISTEC Hearts Academy"), active voice prompt (3627 chars).
+- **⚠️ One deliberate gap:** the Hearts Academy **"Hearts Talk 1080×1080" template was skipped** (user's call) — it's 1.9 MB of inline-base64 HTML (the oversized-template from the 2026-07-17 incident) and pushing it through the browser was disproportionately expensive/fragile. To add it later: POST the local `htmlTemplate` straight to `/api/admin/brandkits/[id]/templates` from a local script (bytes over the wire, not through a model tool call), or rebuild a slim version that references the logo URLs instead of embedding base64. Local source lives in the local DB (team `team_bistec_default`, kit `cmqroh4po00008xc8tcntem58`).
+- **UI mechanics worth knowing** (KitDetail): "Add logo" is a direct file input that names the logo from its filename and auto-marks the **first** upload primary — upload the intended primary first, then rename each via the inline label (uncontrolled `defaultValue`, saves on **blur**). Colours are added one hex at a time; fonts via the Google-Fonts search combobox. The detail panel sometimes shows a **stale** "No colors defined" after a save — the API is the source of truth, not the a11y snapshot.
+
+### 2. Team-name-reuse soft-delete bug fixed — PR #38 (merged 2026-07-27 as `b35d96bd`)
+
+**Symptom:** after deleting a team you couldn't recreate one with the same name (e.g. "Hearts Academy"). **Cause:** team delete is a soft delete (`isDeleted:true`, row kept), but `Team.name` had a plain `@unique` that counted deleted rows, and the create/rename routes checked with `findUnique({name})` (no `isDeleted` filter) — so a deleted team reserved its name forever.
+
+**Fix (branch `fix/team-name-reuse-after-delete`, commit `05925eca`, PR #38 → `main`):** scope uniqueness to **live** teams.
+
+- Dropped `@unique` from `Team.name`; new migration **`20260726120000_team_name_unique_active`** drops `Team_name_key` and creates a **partial** unique index `Team_name_active_key ON "Team"("name") WHERE "isDeleted" = false`.
+- Create + rename routes now check with `findFirst({ name, isDeleted:false })` (rename excludes self) and map a `P2002` race to 409.
+- `scripts/seed-teams.mjs` + `scripts/migrate-to-teams.mjs` moved off `findUnique`-by-name (name is no longer a Prisma unique field → would throw at runtime).
+- Gates: tsc clean, lint 0 errors (7 pre-existing warnings), **unit 318/318**, and a direct-DB proof (reuse of a soft-deleted name succeeds; a second _live_ duplicate is rejected with P2002). Migration applied cleanly to the local DB.
+- **⚠️ Prod — this prediction was half right, and the wrong half mattered.** It correctly said the migration "only runs on `prisma migrate deploy` during a redeploy". It wrongly _assumed a redeploy runs one_. It does not: nothing in the image or the pipeline ever did. PR #38 merged, prod redeployed, and "Hearts Academy" still 409'd — because the index was never created. **See the 2026-07-27 section at the top of this file** for the diagnosis and the migrate-on-boot fix.
+
+---
+
+## ⏸️ 2026-07-24 — the redeploy blocker (RESOLVED — kept for context)
+
+> **Superseded.** The redeploy happened on 2026-07-24 and **B3 is fixed**; **B5** (found in that run) was fixed by **PR #37** `fb8216c3`. **B4** (scheduler worker not running) is the only item here still open. See [`docs/prod-e2e-findings-2026-07-24.md`](prod-e2e-findings-2026-07-24.md) for the post-redeploy run, and the 2026-07-27 section above for the separate migrations gap.
 
 **All code is merged to `main`. The one remaining blocker is a VPS/Coolify redeploy** — prod is still running the pre-fix image. Full detail: `docs/prod-e2e-findings-2026-07-23.md`.
 

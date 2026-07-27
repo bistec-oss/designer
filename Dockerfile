@@ -88,13 +88,27 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma schema + generated client
+# Copy Prisma schema + migrations + generated client
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
+# The Prisma CLI, for `migrate deploy` on boot (see docker-entrypoint.sh). It is
+# a devDependency, so the deps stage's `npm ci --omit=dev` skips it — and that
+# stage's `--ignore-scripts` would in any case leave @prisma/engines without its
+# downloaded engine binaries. Taking it from the builder (full `npm ci`, scripts
+# run) gets a CLI whose schema-engine binary is already present: the @prisma
+# scope copied above carries the linux-musl engines this image needs.
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+
 # Copy the bundled scheduler worker (see the esbuild step in the builder stage).
 COPY --from=builder /app/dist ./dist
+
+# Applies pending migrations, then execs CMD. chmod here rather than relying on
+# the committed file mode — this repo is developed on Windows, where git does not
+# track the executable bit.
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 USER nextjs
 
@@ -102,6 +116,11 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+
+# Migrations run on every boot, for both resources — the scheduler's CMD override
+# still passes through the entrypoint. See docker-entrypoint.sh for the advisory
+# lock / fail-loud reasoning and the SKIP_MIGRATIONS escape hatch.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # Default: Next.js server.
 # The docker-compose scheduler service overrides CMD to run the scheduler worker.
