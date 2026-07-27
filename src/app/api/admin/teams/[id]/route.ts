@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { withSuperAdmin, parseBody } from '@/lib/api/handler'
@@ -19,18 +20,30 @@ export const PATCH = withSuperAdmin<Params>(async (req, { params }) => {
     return NextResponse.json({ error: 'Team not found' }, { status: 404 })
   }
 
-  const conflict = await prisma.team.findUnique({ where: { name } })
-  if (conflict && conflict.id !== params.id) {
+  // Uniqueness is scoped to LIVE teams (partial unique index
+  // Team_name_active_key WHERE isDeleted = false), so only a different
+  // non-deleted team holding this name is a conflict.
+  const conflict = await prisma.team.findFirst({
+    where: { name, isDeleted: false, id: { not: params.id } },
+  })
+  if (conflict) {
     return NextResponse.json({ error: 'A team with this name already exists' }, { status: 409 })
   }
 
-  const updated = await prisma.team.update({
-    where: { id: params.id },
-    data: { name },
-    select: { id: true, name: true, createdAt: true },
-  })
+  try {
+    const updated = await prisma.team.update({
+      where: { id: params.id },
+      data: { name },
+      select: { id: true, name: true, createdAt: true },
+    })
 
-  return NextResponse.json(updated)
+    return NextResponse.json(updated)
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return NextResponse.json({ error: 'A team with this name already exists' }, { status: 409 })
+    }
+    throw err
+  }
 })
 
 // Soft-delete only — memberships/content stay intact for audit purposes;

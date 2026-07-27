@@ -220,7 +220,13 @@ enum TeamRole {
 
 model Team {
   id                   String           @id @default(cuid())
-  name                 String           @unique
+  // Uniqueness is scoped to LIVE teams only via a partial unique index
+  // (`Team_name_active_key ... WHERE "isDeleted" = false`, see migration
+  // 20260726120000_team_name_unique_active). A plain @unique here would also
+  // count soft-deleted rows, so a deleted team's name could never be reused.
+  // Because the column is no longer a Prisma unique field, name lookups use
+  // findFirst({ name, isDeleted: false }), not findUnique.
+  name                 String
   isDeleted            Boolean          @default(false)
   deletedAt            DateTime?
   createdAt            DateTime         @default(now())
