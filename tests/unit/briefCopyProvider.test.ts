@@ -5,7 +5,7 @@
 // skip the existence check; API mode still requires a key.
 
 import { describe, it, expect } from 'vitest'
-import { resolveBriefCopyKey } from '@/lib/brief/copyProvider'
+import { resolveBriefCopyKey, canSubmitBrief } from '@/lib/brief/copyProvider'
 
 describe('resolveBriefCopyKey', () => {
   it('uses an explicitly provided key and marks it for existence validation', () => {
@@ -28,5 +28,37 @@ describe('resolveBriefCopyKey', () => {
   it('API mode + no key ⇒ error (still required)', () => {
     expect(resolveBriefCopyKey(undefined, false)).toEqual({ error: 'copyProviderKey is required' })
     expect(resolveBriefCopyKey('', false)).toEqual({ error: 'copyProviderKey is required' })
+  })
+})
+
+// The wizard's Generate button used to gate on "a COPY provider row exists",
+// which stopped matching the route once CLI mode made the key optional: the
+// button stayed disabled on a team with no COPY provider, so the CLI default was
+// unreachable from the UI even though POST /api/briefs would have accepted it.
+// canSubmitBrief is that gate, defined as the negation of the route's own error
+// case — these tests pin the two rules together.
+describe('canSubmitBrief', () => {
+  it('CLI mode + NO registered copy provider ⇒ submittable (the regression)', () => {
+    expect(canSubmitBrief(undefined, true)).toBe(true)
+    expect(canSubmitBrief('', true)).toBe(true)
+    expect(canSubmitBrief('   ', true)).toBe(true)
+  })
+
+  it('API mode + no copy provider ⇒ blocked (a 400 would follow)', () => {
+    expect(canSubmitBrief(undefined, false)).toBe(false)
+    expect(canSubmitBrief('', false)).toBe(false)
+  })
+
+  it('an explicit key is submittable in either mode', () => {
+    expect(canSubmitBrief('anthropic-123', false)).toBe(true)
+    expect(canSubmitBrief('anthropic-123', true)).toBe(true)
+  })
+
+  it('agrees with resolveBriefCopyKey for every combination', () => {
+    for (const key of [undefined, '', '   ', 'anthropic-123']) {
+      for (const cliMode of [true, false]) {
+        expect(canSubmitBrief(key, cliMode)).toBe(!('error' in resolveBriefCopyKey(key, cliMode)))
+      }
+    }
   })
 })

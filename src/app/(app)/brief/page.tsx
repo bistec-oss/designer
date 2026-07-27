@@ -106,7 +106,7 @@ export default function NewBriefPage() {
             topic={wizard.topic}
             prompt={wizard.prompt}
             providersLoaded={wizard.providersLoaded}
-            copyProviderKey={wizard.copyProviderKey}
+            copyProviderReady={wizard.copyProviderReady}
             error={wizard.error}
             submitting={submitting}
           />
@@ -123,7 +123,7 @@ export default function NewBriefPage() {
               Continue <ChevronRight size={15} />
             </Button>
           ) : (
-            <Button onClick={wizard.handleGenerate} disabled={submitting || !wizard.copyProviderKey} className="gap-1.5">
+            <Button onClick={wizard.handleGenerate} disabled={submitting || !wizard.copyProviderReady} className="gap-1.5">
               {submitting ? <><Loader2 size={15} className="animate-spin" /> Generating…</> : <><Sparkles size={15} /> Generate Post</>}
             </Button>
           )}

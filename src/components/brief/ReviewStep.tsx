@@ -23,7 +23,7 @@ interface ReviewStepProps {
   topic: string
   prompt: string
   providersLoaded: boolean
-  copyProviderKey: string
+  copyProviderReady: boolean
   error: string | null
   submitting: boolean
 }
@@ -41,7 +41,7 @@ export function ReviewStep({
   topic,
   prompt,
   providersLoaded,
-  copyProviderKey,
+  copyProviderReady,
   error,
   submitting,
 }: ReviewStepProps) {
@@ -84,9 +84,10 @@ export function ReviewStep({
         </div>
       </div>
 
-      {providersLoaded && !copyProviderKey && (
+      {providersLoaded && !copyProviderReady && (
         <div className="mt-4 rounded-xl px-4 py-3 text-sm text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/20">
-          No copy provider is configured. An admin must add one in AI Providers before generating.
+          No copy provider is configured, and the server is not in CLI mode. An admin must add a
+          COPY provider in AI Providers before generating.
         </div>
       )}
 

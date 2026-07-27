@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/apiFetch'
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser'
+import { canSubmitBrief } from '@/lib/brief/copyProvider'
 import type { AspectRatio } from '@prisma/client'
 import type {
   Campaign,
@@ -92,7 +94,8 @@ export interface UseBriefWizardResult {
   selectedRefTemplate: TemplateSummary | null
   selectedBrandKit: BrandKitSummary | null
   providersLoaded: boolean
-  copyProviderKey: string
+  /** True when POST /api/briefs would accept this submission (see canSubmitBrief). */
+  copyProviderReady: boolean
 }
 
 export function useBriefWizard(): UseBriefWizardResult {
@@ -275,7 +278,14 @@ export function useBriefWizard(): UseBriefWizardResult {
     list?.find(p => p.isDefault)?.providerKey ?? list?.[0]?.providerKey ?? ''
   const copyProviderKey = pickDefault(copyProviders)
   const imageProviderKey = pickDefault(imageProviders)
-  const providersLoaded = copyProvidersLoaded && imageProvidersLoaded
+  // In CLI mode copy needs no registered provider — it runs `claude -p` on the
+  // OAuth chain (personal token → team token). The gate is the route's own
+  // decision function, so the button can't disagree with what POST /api/briefs
+  // will accept. cliMode must be LOADED before gating, or the warning flashes on
+  // first paint (/api/me defaults it to false while in flight).
+  const { cliMode, isLoading: meLoading } = useCurrentUser()
+  const copyProviderReady = canSubmitBrief(copyProviderKey || undefined, cliMode)
+  const providersLoaded = copyProvidersLoaded && imageProvidersLoaded && !meLoading
 
   // Keep template selections consistent with the chosen brand kit AND size: any
   // template that doesn't belong to the selected kit, or doesn't match the chosen
@@ -390,8 +400,10 @@ export function useBriefWizard(): UseBriefWizardResult {
   // ── Submit: create brief → generate → open draft ───────────────────────
   async function handleGenerate() {
     setError(null)
-    if (!copyProviderKey) {
-      setError('No copy provider is configured. Ask an admin to add one in AI Providers.')
+    if (!copyProviderReady) {
+      setError(
+        'No copy provider is configured, and the server is not in CLI mode. Ask an admin to add a COPY provider in AI Providers.'
+      )
       return
     }
     setSubmitting(true)
@@ -409,7 +421,9 @@ export function useBriefWizard(): UseBriefWizardResult {
         designMode,
         campaignId: campaignId || undefined,
         brandKitId: brandKitId || undefined,
-        copyProviderKey,
+        // Omitted (not '') when no provider is registered, so the route takes its
+        // CLI default instead of existence-checking an empty key.
+        copyProviderKey: copyProviderKey || undefined,
         imageProviderKey: imageProviderKey || undefined,
         briefImages: images.length > 0 ? images.map(({ url, intent, filename }) => ({ url, intent, filename })) : undefined,
         // Path A embeds a single image; pass the first embed image through.
@@ -516,6 +530,6 @@ export function useBriefWizard(): UseBriefWizardResult {
     selectedRefTemplate,
     selectedBrandKit,
     providersLoaded,
-    copyProviderKey,
+    copyProviderReady,
   }
 }

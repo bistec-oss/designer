@@ -23,3 +23,17 @@ export function resolveBriefCopyKey(
   if (cliMode) return { key: 'cli', validateExists: false }
   return { error: 'copyProviderKey is required' }
 }
+
+// The brief wizard's submit gate. Deliberately defined here, on top of
+// resolveBriefCopyKey, rather than as a separate `if` in the wizard: the client
+// used to carry its OWN rule ("a COPY provider must exist"), which silently
+// stopped matching the route when CLI mode made the key optional. The Generate
+// button stayed disabled and the API's CLI default was unreachable from the UI —
+// the fix was server-side only. Sharing one function makes that drift
+// impossible: if the route would accept the submission, the button is live.
+export function canSubmitBrief(
+  copyProviderKey: string | undefined,
+  cliMode: boolean
+): boolean {
+  return !('error' in resolveBriefCopyKey(copyProviderKey, cliMode))
+}
