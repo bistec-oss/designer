@@ -121,7 +121,23 @@ Kit override Hearts Academy, standalone (no project), no default tone. **Briefin
 
 **⚠️ Two inferred facts to confirm:** the contact block (`076-8030-944`, `heartsacademy@bistecglobal.com`, `www.hearts.academy`) was read off the reference image, and "undergraduates" comes from its "Are you an Undergraduate?" hook — neither was supplied directly.
 
-**Unproven:** no post has been generated under IRP, so the Editorial Split and kit v2 have not met the design agent.
+### ✅ Verified end-to-end 2026-07-28 — first real IRP post
+
+Draft **`cms3m2fvk00055tlsv465otld`**, 1:1, Path B, **EXPORTED** (copy at ~42s, full run ~5 min). One generation proved six things at once:
+
+- **PR #40** — `Generate Post` was live, with no amber warning, on a team with **zero** COPY providers. This is that fix's only real proof; local cannot reproduce it.
+- **Copy via `claude -p`** on the acting user's personal OAuth token, no COPY provider involved (1960 chars).
+- **Kit voice prompt v2** — Hearts Academy logo **left**, BISTEC Global right; teal→green gradient with the faint white graph-grid; photographic imagery.
+- **The Editorial Split** — type left, photo in its own full-bleed right band, **zero overlap**. The reason for choosing it held exactly: legibility never depended on what gpt-image returned.
+- **A real gpt-image background** (`generated-images/background-…png`), resolved via the personal OpenAI key.
+- **PR #37 / B5** — the presigned export URL points at the public MinIO host and fetched **200 `image/png`, 2 MB, 2160×2160** from outside the cluster.
+
+**The FACTS — DO NOT INVENT rule held**, which was the main thing at risk given the real dates were never supplied: the CTA is "Apply Now" / "Applications are open", with **no month, deadline, duration or fabricated numbers** anywhere in image or caption. The copy names "Industry Readiness Programme" in full, uses `#IRP`, and gets "BISTEC Hearts Academy" exactly right; Instagram short, LinkedIn value-first, per the PLATFORM rules.
+
+**Two fidelity misses** (the design was otherwise faithful):
+
+1. **The Hearts Academy logo renders much smaller than the BISTEC Global one**, despite the kit's "similar visual heights" instruction — evidently too soft a phrasing. Worth a minimum height or an explicit ratio.
+2. **The image never names the programme.** The headline is "REAL INDUSTRIAL TRAINING" and the navy band reuses "A real industrial training programme" — which the briefing itself calls a _description, not the name_. Only the caption carries the real name. If on-image naming matters, require IRP in the headline or kicker rather than leaving it implied.
 
 ---
 
