@@ -51,7 +51,7 @@ enum TeamRole {
 
 model Team {
   id                   String           @id @default(cuid())
-  name                 String           @unique
+  name                 String           @unique  // ⚠ REVISED 2026-07-26 (PR #38): partial unique index scoped to live teams (WHERE isDeleted=false, migration 20260726120000) so a deleted team's name can be reused
   isDeleted            Boolean          @default(false)
   deletedAt            DateTime?
   createdAt            DateTime         @default(now())
