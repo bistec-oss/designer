@@ -24,7 +24,7 @@ Both were reported as "the fix didn't work". Both times the code was right and t
 
 1. **🟠 B4 — scheduler resource not running** (unchanged from 2026-07-24). _And_ a second blocker discovered today: **neither prod team has a team Claude token**, and the scheduler resolves credentials with `userId: null`, so it has no personal tier. Fixing the Coolify resource alone will **not** make scheduled generation work — set a team token at `/team` too.
 2. **🟠 Both prod IMAGE providers are enabled but not `isDefault`** — `resolveImageProvider` tier 3 requires `isDefault`, so a teammate without a personal OpenAI key silently gets no AI background (generation still completes; it never throws).
-3. **Prove the new prod content works** — no post has been generated under IRP yet, so the Editorial Split layout and brand-kit voice prompt **v2** are both unproven against the design agent.
+3. ~~**Prove the new prod content works.**~~ ✅ **Done** — three real IRP generations, all EXPORTED, tuning the design across kit prompt v2→v4 and briefing v1→v3 (see the two "verified" sections below). **🟠 One drift left open:** renders come out **navy/blue dominant** rather than the kit's teal-to-green primary; that rule still has no proportion attached, unlike the logo/naming/edge rules that were fixed.
 4. **Confirm two inferred facts** in the IRP briefing — the contact block was read off the reference image, and "undergraduates" is inferred from its hook line.
 5. Remaining prod tests + wiping the kept **Claude Testing** data (see `CLAUDE.md`). The Hearts Academy team data is **real, not test data** — don't wipe it.
 
@@ -94,7 +94,7 @@ Copied from the Bistec team's Hearts Academy kit **via the API, not by hand**: c
 - **Source filenames preserved deliberately** (`hearts__hearts-academy-logo-transparent.png` etc.) — the voice prompt tells the model "the file names identify them", so renaming them would quietly break logo selection.
 - **Set as team default** (the source kit is not, because Bistec holds that slot in its own team). It is the only kit here, and without a default a brief that doesn't name a kit has nothing to resolve to.
 
-### Brand-kit voice prompt → v2 (v1 preserved under History)
+### Brand-kit voice prompt → v2 (now at **v4** — see the two "verified" sections below; every version preserved under History)
 
 The reference creative for IRP contradicted the inherited prompt in four places, so the prompt was corrected at the **brand** level only — IRP-specific composition went into the campaign briefing instead, to avoid over-fitting the kit to one campaign:
 
