@@ -1,0 +1,10 @@
+# Shell scripts must keep LF endings in the working tree.
+#
+# This repo is developed on Windows with core.autocrlf=true, so a fresh clone
+# would otherwise check out docker-entrypoint.sh with CRLF — and a CRLF shebang
+# makes the Linux image fail to boot with the classic "not found" / "bad
+# interpreter" error the moment Docker COPYs it in. CI on Linux never sees this,
+# so it would only ever break Windows-local `docker build`.
+#
+# Deliberately narrow: no repo-wide `* text=auto`, which would churn every file.
+*.sh text eol=lf
