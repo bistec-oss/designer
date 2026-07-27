@@ -148,6 +148,17 @@ Draft **`cms3m2fvk00055tlsv465otld`**, 1:1, Path B, **EXPORTED** (copy at ~42s, 
 
 **✅ Both confirmed by regeneration** — draft `cms3meigo0009zb6ejz40bh7p` (brief `cms3meibe0007zb6et7p8rnj8`), EXPORTED. The headline is now **"INDUSTRY READINESS PROGRAMME"** in the navy card with "READINESS" picked out in green, and the old descriptor is correctly demoted to a small subline ("Real industrial exposure. Hands-on training. Expert mentorship."). The logo pill is compact, centred, hugging both marks with a thin divider between them. Kicker "APPLICATIONS OPEN" with no date, so the FACTS rule still holds; the "built with hearts, not just hours" bullet shows the VOICE section's hearts-wordplay rule firing too. **Remaining nit:** the Hearts Academy mark is still a little lighter in visual weight than the BISTEC Global wordmark — much closer than v2, but if exact parity matters, specify it as equal _cap height_ of the wordmarks rather than equal overall mark height.
 
+### Round two — kit prompt v4 + briefing v3 (2026-07-28), also verified
+
+Draft **`cms3mrfew00099tx3wkz5972n`** (brief `cms3mrf9p00079tx3x7t84buv`), EXPORTED. Two remaining complaints, both fixed:
+
+- **Logo parity — size by WORDMARK CAP HEIGHT, not overall mark height (kit v4).** v3's "same optical height" still left the Hearts mark reading smaller, because the Hearts lockup is a **stacked** mark (heart symbol + "BISTEC" / "Hearts Academy" on separate lines) while "BISTEC Global" is a near-single-line wordmark — matching total heights necessarily shrinks the stacked mark's lettering. v4 states it directly: the capitals in "Hearts Academy" must match the capitals in "BISTEC", the Hearts lockup will therefore be **taller overall and that is correct**, scale the Hearts mark up rather than the Global mark down, and when in doubt err toward the Hearts mark being larger. **Result: genuine parity — the two wordmarks now read at the same size.**
+- **The type/image seam was too harsh (briefing v3).** Added an **EDGE TREATMENT** section: the boundary is never a crisp vertical edge — mask the image's left edge with a horizontal transparent→opaque gradient across ~10–15% of canvas width so the photo emerges out of the background, add a gentle blur along the boundary, wash the background gradient over the image's left third, and never mark the edge with a line, border, stroke or drop-shadow. Crucially it also states the fade belongs to the **image, not the text**, so all type stays clear of the fade zone and softening never costs legibility. **Result: the hard seam is gone — the photo dissolves into the gradient.**
+
+**Pattern behind all four of these fixes:** every miss came from an _adjectival_ instruction ("similar visual heights", "generous clear space", "IRP is fine on-image") and every fix came from replacing it with something _measurable_ — a cap height to match, a percentage width, a required string in the headline. When a design instruction doesn't stick, check whether it is checkable.
+
+**One honest drift to watch:** this render's canvas reads **navy/blue dominant** rather than the teal-to-green primary the kit specifies, with green reduced to accents. Not wrong exactly — navy is a sanctioned accent — but it drifts from "teal-to-green gradient is the primary canvas". If the green-forward look matters, that rule needs the same treatment the logo rule just got: a concrete proportion rather than an adjective.
+
 ---
 
 ## 2026-07-26
