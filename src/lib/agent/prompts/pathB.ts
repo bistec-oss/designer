@@ -6,7 +6,7 @@ import type { ResolvedBrandKit } from '@/lib/brandkit/resolve'
 import { buildBrandKitSystemContext } from '@/lib/brandkit/systemContext'
 import type { PipelineMode } from '@/lib/agent/config'
 import type { BriefImage } from '@/lib/agent/briefInput'
-import { outputProtocol } from './shared'
+import { outputProtocol, SCRIPT_SUPPORT_NOTE } from './shared'
 
 export interface PathBPromptOptions {
   kit: ResolvedBrandKit
@@ -53,6 +53,7 @@ Design requirements:
 Image intent rules (IMPORTANT):
 - Images tagged "embed": YOU MUST include these in the HTML layout via <img> tags
 - Images tagged "reference": use for compositional inspiration only — do NOT embed as <img> tags${referenceTemplateLine}
+${SCRIPT_SUPPORT_NOTE}
 ${outputProtocol(mode, width, height)}`
 }
 

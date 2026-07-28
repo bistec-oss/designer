@@ -61,7 +61,11 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 # openssl: Prisma's runtime OpenSSL detection needs it (see builder stage note).
-RUN apk add --no-cache libc6-compat chromium openssl
+# font-noto-sinhala: Sinhala (සිංහල) glyphs for rendered posts. Alpine's chromium
+# ships only Latin-capable fonts, so without this Sinhala copy rasterizes as tofu
+# boxes. Installed OS-wide so Chromium's fontconfig fallback picks it up for any
+# Sinhala codepoint automatically — no CSS/@import required in the generated HTML.
+RUN apk add --no-cache libc6-compat chromium openssl font-noto-sinhala
 
 # Claude Code CLI — CLI-mode generation (DESIGN_PROVIDER=cli) spawns `claude -p`
 # per call, authenticated by CLAUDE_CODE_OAUTH_TOKEN env (the shared server

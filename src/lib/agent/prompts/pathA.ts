@@ -5,7 +5,7 @@
 import type { ResolvedBrandKit } from '@/lib/brandkit/resolve'
 import { buildBrandKitSystemContext } from '@/lib/brandkit/systemContext'
 import type { PipelineMode } from '@/lib/agent/config'
-import { outputProtocol, placeholderNote } from './shared'
+import { outputProtocol, placeholderNote, SCRIPT_SUPPORT_NOTE } from './shared'
 
 export interface PathAPromptOptions {
   kit: ResolvedBrandKit | null
@@ -38,6 +38,7 @@ Instructions:
 - Fill the template with the provided copy text. Replace placeholder text with the actual content.
 - Keep the template's structure, layout, and CSS intact — only swap in the content. The template is already sized for a ${width}×${height} px canvas; do not change its dimensions.
 - Apply brand colors as CSS custom properties where appropriate.${imageInstruction}${placeholderNote(hasInlineAssets)}
+${SCRIPT_SUPPORT_NOTE}
 ${outputProtocol(mode, width, height)}`
 }
 

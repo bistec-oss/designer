@@ -1,17 +1,27 @@
 import { ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
-import { getCurrentUser, hasRole } from '@/lib/auth'
+import { resolveTeamForServerComponent } from '@/lib/authz/serverTeam'
 import { GlassPanel } from '@/components/ui/GlassPanel'
 
 // Server-side gate for every /admin page. The sidebar already hides the Admin
-// entry for non-admins; this enforces it for direct navigation. API routes
-// carry their own requireRole('admin') checks — this is the page-level UX.
+// entries for non-admins; this enforces it for direct navigation.
+//
+// This gate is TEAM-admin (per-team role ADMIN, super admins pass every gate),
+// NOT global-admin — matching the sidebar (`adminOnly` → isTeamAdmin) and the
+// brand-kit API (`withTeamAdmin`). Gating on the global role blocked a team
+// admin (whose global Role is EDITOR) from /admin/brandkits even though the API
+// would serve them. The super-admin-only pages under /admin (users, teams) keep
+// their own in-page "Requires super admin" gate, so loosening this to team-admin
+// does not widen their access.
 export const dynamic = 'force-dynamic'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const user = await getCurrentUser()
+  const ctx = await resolveTeamForServerComponent()
+  const isTeamAdmin =
+    ctx != null &&
+    (ctx.isSuperAdmin || (ctx.team.kind === 'ok' && ctx.team.teamRole === 'ADMIN'))
 
-  if (!user || !hasRole(user.role, 'admin')) {
+  if (!isTeamAdmin) {
     return (
       <GlassPanel className="p-12 text-center max-w-md mx-auto mt-12">
         <ShieldAlert size={32} className="mx-auto mb-3 text-light-text-muted dark:text-dark-text-muted" />

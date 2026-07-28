@@ -20,6 +20,13 @@ Two separate bugs this session, same shape — the fix existed but something dow
 
 Both were reported as "the fix didn't work". Both times the code was right and the _edge_ around it was wrong. **When a merged fix appears not to work: check the schema half of the release, and check whether the client carries a duplicate of the rule you changed.**
 
+### ✅ 2026-07-28 (later) — brand-kit access + Sinhala fonts (pushed to `main`)
+
+Two unrelated fixes, one push straight to `main` (verified: tsc clean, lint clean, **322/322 unit**; no schema change).
+
+- **Team admins were locked out of `/admin/brandkits`.** `src/app/(app)/admin/layout.tsx` gated **every** `/admin/*` page on the **global** `Role` (`hasRole(user.role, 'admin')`), but brand kits are **team-scoped**: the sidebar shows the link on `isTeamAdmin` and the API uses `withTeamAdmin`, both of which a team admin (global role `EDITOR`) passes. So the link appeared, the click landed on the "Requires admin" panel, and the API would in fact have served them. **Fix:** the layout now checks **team admin (or super admin)** via `resolveTeamForServerComponent()` — the same check `/team/layout.tsx` already used (its comment claimed it mirrored `admin/layout.tsx`, but `admin/layout.tsx` was the one still on the global role). `/admin/users` + `/admin/teams` self-gate on super-admin inside their own pages, so nothing widened; team editors stay blocked.
+- **Sinhala (සිංහල) now renders in generated posts.** Alpine's `chromium` ships Latin-only fonts → Sinhala came out as tofu boxes. **`Dockerfile` runner stage installs `font-noto-sinhala`** so Chromium's fontconfig fallback covers Sinhala codepoints automatically (no CSS/`@import` needed). Plus a shared **`SCRIPT_SUPPORT_NOTE`** in `prompts/shared.ts`, wired into Path A/B/refine, telling the agent to reproduce non-Latin glyphs exactly and that `"Noto Sans Sinhala"` is available; `PROMPT_VERSION` → `2026-07-28.1`. **⚠️ Needs an image rebuild** for the font to reach prod (a `main` redeploy does it). Copy already writes Sinhala when asked; local Windows dev already rendered it via Nirmala UI.
+
 ### ✅ Open items after this session
 
 1. **🟠 B4 — scheduler resource not running** (unchanged from 2026-07-24). _And_ a second blocker discovered today: **neither prod team has a team Claude token**, and the scheduler resolves credentials with `userId: null`, so it has no personal tier. Fixing the Coolify resource alone will **not** make scheduled generation work — set a team token at `/team` too.

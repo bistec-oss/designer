@@ -5,7 +5,7 @@
 import type { ResolvedBrandKit } from '@/lib/brandkit/resolve'
 import { buildBrandKitSystemContext } from '@/lib/brandkit/systemContext'
 import type { PipelineMode } from '@/lib/agent/config'
-import { placeholderNote } from './shared'
+import { placeholderNote, SCRIPT_SUPPORT_NOTE } from './shared'
 
 export interface RefinePromptOptions {
   kit: ResolvedBrandKit
@@ -37,12 +37,14 @@ Output protocol (single-shot — you have NO tools):
 - Apply the user's instruction as a targeted edit to the HTML above. Change ONLY what the instruction requires; preserve all other structure, layout, and CSS.
 - Keep the ${width}×${height} px canvas size unless the instruction explicitly asks to resize it.
 - Do NOT add external image/CDN references other than any URL explicitly named in the instruction or this system prompt. Brand font @import URLs are allowed.
+- Preserve any non-Latin text (e.g. Sinhala සිංහල) exactly — never transliterate or drop glyphs. "Noto Sans Sinhala" is available and the renderer also falls back to it automatically.
 - Output ONLY the complete updated HTML document, starting with <!DOCTYPE html> and ending with </html>. No markdown code fences, no commentary.`
   }
 
   return `You are a design refinement agent. Here is the current HTML design. Apply the user's instruction as a targeted edit — change only what the instruction requires and preserve everything else.
 
 ${buildBrandKitSystemContext(kit)}${backgroundNote(backgroundImageUrl)}
+${SCRIPT_SUPPORT_NOTE}
 
 Compliance instructions:
 Before applying any change, check if it conflicts with the brand kit (e.g. introducing off-brand colors, removing the logo, replacing brand fonts). If it does NOT conflict, apply the change and call renderHtml(html, ${width}, ${height}) as your final step to produce the finished PNG.
