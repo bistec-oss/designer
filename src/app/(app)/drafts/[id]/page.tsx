@@ -192,8 +192,12 @@ export default function DraftDetailPage() {
     draft?.pendingAction === 'REGENERATE_DESIGN' || draft?.pendingAction === 'REFINE'
   const isFailed = draft?.status === 'FAILED'
   // Copy resolves independently of the image: show it the moment it's written,
-  // even while the design is still rendering.
-  const copyPending = isGenerating && !draft?.copyText
+  // even while the design is still rendering. The skeleton stands in for copy
+  // that hasn't been WRITTEN YET, which only happens before the design exists
+  // (generation writes copy first) — a draft that already has a design has
+  // finished generating, so empty copy there is a deliberate deletion and must
+  // show the editable field, never a skeleton the user can't type into.
+  const copyPending = isGenerating && !draft?.copyText && !draft?.htmlContent
   const ready = draft?.status === 'EXPORTED' || draft?.status === 'PUBLISHED'
 
   if (loading) {

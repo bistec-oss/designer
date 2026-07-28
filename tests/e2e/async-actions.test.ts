@@ -348,4 +348,56 @@ test.describe('§Q — async draft actions', () => {
     expect(notReady.status()).toBe(409)
     expect((await notReady.json()).error).toBe('Draft is not ready for copy regeneration')
   })
+
+  // TC-ASYNC-10 — a manual copy edit (including clearing the copy entirely) must
+  // not disturb Draft.status. PATCH used to flip EXPORTED → IN_PROGRESS, which
+  // dropped the draft out of the library, hid Refine design / Edit inline, made
+  // Regenerate copy answer 'Draft is not ready for copy regeneration', and after
+  // 15 min let the sweep mark the draft FAILED — with nothing regenerating, so
+  // the only way out was to regenerate the whole post.
+  test('editing or clearing the copy leaves the draft EXPORTED and every action available', async () => {
+    if (!MOCKED()) { test.skip(); return }
+    const topic = `Async Copy Edit ${Date.now()}`
+    const draft = await createExportedDraft(api, topic)
+    const beforeExportPath = urlPath(draft.exportUrl)
+
+    // 1. An ordinary copy edit. The PATCH response itself must already say EXPORTED.
+    const edited = await api.patch(`/api/drafts/${draft.id}`, { copyText: 'Hand-written caption.' })
+    expect(edited.status()).toBe(200)
+    const editedBody = await edited.json()
+    expect(editedBody.copyText).toBe('Hand-written caption.')
+    expect(editedBody.status).toBe('EXPORTED')
+    // The design is untouched — copy and design are independent artifacts.
+    expect(editedBody.htmlContent).toBe(draft.htmlContent)
+    expect(urlPath(editedBody.exportUrl)).toBe(beforeExportPath)
+    expect(editedBody.currentRevisionNumber).toBe(1)
+
+    // 2. Clearing the copy COMPLETELY — the reported trigger — is just an empty
+    // string, not a draft mid-generation.
+    const cleared = await api.patch(`/api/drafts/${draft.id}`, { copyText: '' })
+    expect(cleared.status()).toBe(200)
+    const clearedBody = await cleared.json()
+    expect(clearedBody.copyText).toBe('')
+    expect(clearedBody.status).toBe('EXPORTED')
+
+    // 3. Still in the library (it lists EXPORTED drafts — a flipped status hid it).
+    const library = await (await api.get('/api/library?status=READY&pageSize=50')).json()
+    expect(library.drafts.some((d: { id: string }) => d.id === draft.id)).toBe(true)
+
+    // 4. Regenerate copy is accepted (this was the 409 'not ready') and refills
+    //    the emptied copy without a full regeneration.
+    const regen = await api.post(`/api/drafts/${draft.id}/regenerate-copy`, {})
+    expect(regen.status()).toBe(202)
+    const regenerated = await waitForAction(api, draft.id as string)
+    expect(regenerated.pendingActionError).toBeNull()
+    expect(regenerated.copyText).toContain(topic)
+    expect(regenerated.status).toBe('EXPORTED')
+
+    // 5. Refine design is available too (it gates on EXPORTED and had vanished).
+    const refine = await api.post(`/api/drafts/${draft.id}/refine`, { instruction: 'Add more contrast' })
+    expect(refine.status()).toBe(202)
+    const refined = await waitForAction(api, draft.id as string)
+    expect(refined.pendingActionError).toBeNull()
+    expect(refined.currentRevisionNumber).toBe(2)
+  })
 })

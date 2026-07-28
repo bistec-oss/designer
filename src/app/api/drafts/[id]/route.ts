@@ -1,51 +1,70 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import type { DraftAction } from '@prisma/client'
+import type { DraftAction, DraftStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { withTeamAuth, withTeamAdmin, parseBody } from '@/lib/api/handler'
 import { canAccessContent } from '@/lib/authz/visibility'
 import { resolveBrandKit } from '@/lib/brandkit/resolve'
 import { resolveExportUrl } from '@/lib/storage/minio'
+import { planDraftRecovery, STUCK_ACTION_REASON, STUCK_REASON } from '@/lib/drafts/recovery'
 
 type Params = { id: string }
 
-// A generation running in-process is bounded by the same 15-min lease the
-// scheduled-generation runner uses. If a draft is still IN_PROGRESS well past
-// that, the run was almost certainly interrupted (e.g. a server restart), so
-// it's swept to FAILED lazily on read — the preview page then shows the inline
-// error card + Retry instead of an eternal skeleton.
-const STUCK_GENERATION_MS = 15 * 60_000
+// The fields recoverIfStuck reads and writes. Structurally satisfies the pure
+// planner's RecoverableDraft, but with the Prisma enum types the writes need.
+interface DraftRecoveryRow {
+  id: string
+  status: DraftStatus
+  failureReason: string | null
+  pendingAction: DraftAction | null
+  pendingActionError: string | null
+  updatedAt: Date
+  exportUrl: string | null
+  htmlContent: string | null
+  currentRevisionNumber: number | null
+}
 
-const STUCK_REASON = 'Generation was interrupted. Please retry.'
-
-const STUCK_ACTION_REASON = 'The action was interrupted. Please try again.'
-
-// Returns the EFFECTIVE status/reason (and pending-action fields) after a
-// possible sweep, so the response reflects the recovery immediately (no extra
-// round-trip). Two independent lazy sweeps share the 15-min bound: a draft
-// stranded IN_PROGRESS by an interrupted generation → FAILED, and a stale
-// in-flight async action (regenerate/refine) → cleared with an interruption
-// message. The action sweep never touches draft content or status.
-async function recoverIfStuck(
-  id: string,
-  status: string,
-  failureReason: string | null,
-  pendingAction: DraftAction | null,
-  pendingActionError: string | null,
-  updatedAt: Date,
-): Promise<{
-  status: string
+// Applies the recovery plan (decided purely in lib/drafts/recovery.ts) and
+// returns the EFFECTIVE status/reason + pending-action fields, so the response
+// reflects the recovery immediately with no extra round-trip. Every write guards
+// on the value that was observed, so a concurrent transition always wins. No
+// branch here touches draft CONTENT — only status/reason bookkeeping.
+async function recoverIfStuck(draft: DraftRecoveryRow): Promise<{
+  status: DraftStatus
   failureReason: string | null
   pendingAction: DraftAction | null
   pendingActionError: string | null
 }> {
-  const stale = Date.now() - updatedAt.getTime() >= STUCK_GENERATION_MS
-  const effective = { status, failureReason, pendingAction, pendingActionError }
+  const { id, status, pendingAction } = draft
+  const plan = planDraftRecovery(draft)
+  const effective = {
+    status,
+    failureReason: draft.failureReason,
+    pendingAction,
+    pendingActionError: draft.pendingActionError,
+  }
 
-  if (status === 'IN_PROGRESS' && stale) {
+  // A live post whose status was clobbered by the old copy-edit flip — restore
+  // it instead of letting the generation sweep declare it FAILED.
+  if (plan.healStatus) {
     await prisma.draft
       .updateMany({
-        // Guard on status so we never clobber a run that finished between read and write.
+        where: { id, status, exportUrl: { not: null } },
+        data: { status: 'EXPORTED', failureReason: null },
+      })
+      .catch(() => {
+        /* best-effort recovery */
+      })
+    effective.status = 'EXPORTED'
+    effective.failureReason = null
+  }
+
+  // A draft stranded IN_PROGRESS by an interrupted run (e.g. a server restart)
+  // → FAILED, so the preview page shows the inline error card + Retry instead of
+  // an eternal skeleton.
+  if (plan.failStuckGeneration) {
+    await prisma.draft
+      .updateMany({
         where: { id, status: 'IN_PROGRESS' },
         data: { status: 'FAILED', failureReason: STUCK_REASON },
       })
@@ -56,11 +75,9 @@ async function recoverIfStuck(
     effective.failureReason = STUCK_REASON
   }
 
-  if (pendingAction !== null && stale) {
+  if (plan.clearStuckAction) {
     await prisma.draft
       .updateMany({
-        // Guard on the observed action so we never clobber one that finished
-        // (or a new one that started) between read and write.
         where: { id, pendingAction },
         data: { pendingAction: null, pendingActionError: STUCK_ACTION_REASON },
       })
@@ -94,17 +111,11 @@ async function loadDraft(id: string) {
   })
   if (!draft) return null
 
-  // Sweep a draft stranded IN_PROGRESS by an interrupted run → FAILED (and a
-  // stale in-flight action → cleared), so the effective fields below reflect
-  // the recovery.
-  const effective = await recoverIfStuck(
-    draft.id,
-    draft.status,
-    draft.failureReason,
-    draft.pendingAction,
-    draft.pendingActionError,
-    draft.updatedAt,
-  )
+  // Heal a draft whose status was clobbered while its design is intact →
+  // EXPORTED, sweep one stranded IN_PROGRESS by an interrupted run → FAILED, and
+  // clear a stale in-flight action, so the effective fields below reflect the
+  // recovery.
+  const effective = await recoverIfStuck(draft)
 
   // Surface a refine brand-kit conflict to the poll WITHOUT the stored
   // pendingHtml — it can be huge and is server-side only (the Override path
@@ -205,13 +216,22 @@ export const PATCH = withTeamAuth<Params>(async (req, { params }, user) => {
     )
   }
 
+  // Copy and design are independent artifacts — the copy is the post CAPTION,
+  // the export is the rendered image — so a copy edit must NOT touch
+  // Draft.status. This used to flip EXPORTED → IN_PROGRESS to signal "the export
+  // is stale", but IN_PROGRESS means "generation is running", and every consumer
+  // read it that way: the draft dropped out of the library (it filters on
+  // EXPORTED), Refine design and Edit inline vanished, Regenerate copy answered
+  // 409 'Draft is not ready for copy regeneration', clearing the copy entirely
+  // left the page stuck on an eternal "Writing the copy…" skeleton with no way
+  // back, and after 15 minutes the lazy sweep marked the draft FAILED. Nothing
+  // was regenerating, so the only escape was to regenerate the whole post.
+  // regenerate-copy already leaves status alone (§Q TC-ASYNC-02) — this handler
+  // was the straggler. A "your export predates this copy" nudge belongs in the
+  // UI, not in the status field.
   await prisma.draft.update({
     where: { id: params.id },
-    data: {
-      copyText,
-      // A copy edit invalidates a prior export.
-      ...(existing.status === 'EXPORTED' ? { status: 'IN_PROGRESS' } : {}),
-    },
+    data: { copyText },
   })
 
   const result = await loadDraft(params.id)

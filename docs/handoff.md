@@ -1,6 +1,6 @@
 # bistec-studio — Session Handoff
 
-**Date:** 2026-07-28 (latest: two fixes for one class of bug — a merged fix can be inert. **PR #39** made deploys apply migrations; **PR #40** removed the wizard's stale COPY-provider gate. Hearts Academy team, brand kit and the IRP campaign are now live on prod.)
+**Date:** 2026-07-28 (latest: a copy edit was flipping `Draft.status` to `IN_PROGRESS`, breaking the library, Refine, regenerate-copy and the copy field at once — fixed, with a read-time + migration heal for stranded drafts. Earlier: team-admin brand-kit access + Sinhala font rendering; **PR #39** made deploys apply migrations; **PR #40** removed the wizard's stale COPY-provider gate.)
 **Repo:** https://github.com/bistec-oss/studio (formerly `bistec-oss/designer`)
 **Branch:** `main` — **PR #40** `21f95035` (brief-wizard CLI copy gate) on top of **PR #39** `16e1a069` (migrate on boot), **PR #38** `b35d96bd` (team-name reuse), PR #37 `fb8216c3`, PR #35 `d01ac4d2`, PR #36 `3dcac485`, prod-fix PR #30 `4e8e6e3e`, team-tenancy PR #29 `2a118a73`. All merged; no open branches.
 **Production:** `https://studio.bistecglobal.com`
@@ -20,7 +20,35 @@ Two separate bugs this session, same shape — the fix existed but something dow
 
 Both were reported as "the fix didn't work". Both times the code was right and the _edge_ around it was wrong. **When a merged fix appears not to work: check the schema half of the release, and check whether the client carries a duplicate of the rule you changed.**
 
-### ✅ 2026-07-28 (later) — brand-kit access + Sinhala fonts (pushed to `main`)
+### ✅ 2026-07-28 (latest) — editing the copy silently broke the whole draft
+
+**Reported:** "delete the copy completely and the Refine design option disappears; regenerate the copy afterwards and some posts say draft not ready — fix it so we don't have to regenerate every time it breaks."
+
+**Root cause: one line.** `PATCH /api/drafts/[id]` — the copy editor's save — flipped an `EXPORTED` draft to `IN_PROGRESS` on any copy edit, meaning "the export is now stale". But in this codebase `IN_PROGRESS` means **"a generation is running right now"**, and every consumer read it that way:
+
+| Consumer                     | Gate                                      | Symptom the user saw                           |
+| ---------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| `GET /api/library`           | filters `status: EXPORTED`                | the post disappeared from the library          |
+| Draft page Refine / Edit     | `ready = EXPORTED \|\| PUBLISHED`         | **"the Refine design option disappears"**      |
+| `POST …/regenerate-copy`     | 409 unless EXPORTED/PUBLISHED             | **"it says draft not ready"**                  |
+| Draft page copy block        | `copyPending = isGenerating && !copyText` | eternal "Writing the copy…" skeleton, no field |
+| `recoverIfStuck` (GET, 15 m) | IN_PROGRESS + stale → FAILED              | draft marked "Generation was interrupted"      |
+
+Nothing was ever generating. Five unrelated-looking bugs, one write — and the only escape was regenerating the whole post, which is exactly what the user was tired of doing.
+
+**Fix, three parts:**
+
+1. **The PATCH no longer touches `status`.** Copy and design are independent artifacts — the copy is the post caption, the export is the rendered image. `regenerate-copy` already left status alone (§Q TC-ASYNC-02); this handler was the straggler. A "your export predates this copy" nudge belongs in the UI, not in the status field.
+2. **`copyPending` also requires no `htmlContent`.** Generation writes copy _before_ the design exists, so empty copy on a draft that already **has** a design is a deliberate deletion — it must render the editable field, never a skeleton the user can't type into.
+3. **Stranded drafts are healed, not abandoned.** New pure planner `src/lib/drafts/recovery.ts` (`planDraftRecovery` — unit-tested with no DB, same split as `inlineEdit.ts`) restores them to `EXPORTED` on read; migration `20260728120000_heal_copy_edit_clobbered_drafts` repairs them in bulk, because a draft that's missing from the library can't be opened, so the read-time heal would never fire for it.
+
+**Why the heal is safe and isn't time-gated.** `exportUrl` is only ever written _together with_ `status: 'EXPORTED'` and `currentRevisionNumber` in a single transaction (`finalizeDraftV1`, `/api/generate/export`, `commitDraftRevision`, revision restore — all verified). So a draft carrying export + html + revision pointer had **finished** generating: it is a live post with a clobbered status, not a broken run. A genuinely interrupted generation has `exportUrl` NULL and is left alone. Hence no 15-minute wait (there is no run to wait for), and the heal **suppresses** the generation sweep — a clobbered status must be restored, never failed. Every write guards on the observed value so a concurrent transition wins, and no branch touches draft **content**.
+
+**🧠 The lesson worth keeping: don't overload a state field with a second meaning.** `status` answers "is a generation running". "Is the export stale relative to the copy" is a _different_ question that needed its own answer. Reusing the enum made five consumers wrong simultaneously, and each presented as its own separate bug.
+
+Gates: tsc clean, lint clean (0 errors, 7 pre-existing warnings), **335/335 unit** (13 new `draftRecovery` cases), E2E §Q green including new **TC-ASYNC-10** (edit copy → clear copy → still EXPORTED, still in library, regenerate-copy 202, refine 202). **⚠️ Deploy:** one new migration; a redeploy applies it via the PR #39 entrypoint. No new env vars.
+
+### ✅ 2026-07-28 (earlier) — brand-kit access + Sinhala fonts (pushed to `main`)
 
 Two unrelated fixes, one push straight to `main` (verified: tsc clean, lint clean, **322/322 unit**; no schema change).
 
