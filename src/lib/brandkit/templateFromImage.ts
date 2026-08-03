@@ -2,7 +2,7 @@ import type { AspectRatio } from '@prisma/client'
 import { runVisionModel } from '@/lib/agent/vision'
 import { getImageDimensions } from '@/lib/renderer/puppeteer'
 import { dimensionsFor, nearestAspectRatio } from '@/lib/aspectRatio'
-import { stripCodeFences } from '@/lib/agent/claudeCli'
+import { extractHtmlDocument } from '@/lib/agent/htmlDocument'
 import { MOCK_AI, buildMockTemplateHtml } from '@/lib/testHooks'
 
 // F6 — turn an uploaded image into a reusable Path A HTML template. The vision
@@ -50,5 +50,13 @@ export async function generateTemplateFromImage(input: {
     label: 'image-template',
     teamId: input.teamId,
   })
-  return { html: stripCodeFences(reply).trim(), aspectRatio }
+  // Same cut as the design path (htmlDocument.ts): a preamble saved into a
+  // template would be painted onto every post generated from it, not just once.
+  const extracted = extractHtmlDocument(reply)
+  if (!extracted) {
+    throw new Error(
+      `The model did not return an HTML template (got ${reply.trim().length} chars starting: "${reply.trim().slice(0, 80)}")`
+    )
+  }
+  return { html: extracted.html, aspectRatio }
 }

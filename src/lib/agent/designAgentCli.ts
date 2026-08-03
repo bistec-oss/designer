@@ -1,5 +1,6 @@
 import type { DesignAgentOptions, DesignAgentResult } from "./types"
-import { runClaudeCli, stripCodeFences } from "./claudeCli"
+import { runClaudeCli } from "./claudeCli"
+import { extractHtmlDocument } from "./htmlDocument"
 import { restoreInlineAssets, missingTokens } from "./inlineAssets"
 import { renderHtmlToPng } from "@/lib/renderer/puppeteer"
 import { uploadObject, exportKey, BUCKET_EXPORTS } from "@/lib/storage/minio"
@@ -35,14 +36,24 @@ export async function runDesignAgentCli(options: CliAgentOptions): Promise<Desig
   // Freeform Path B design is a heavier single-shot than copy/template-fill and
   // can run past 3 min on the local CLI; allow more headroom before timing out.
   const raw = await runClaudeCli(prompt, { timeoutMs: 300_000, label: "design", model })
-  let html = stripCodeFences(raw)
 
-  const lower = html.toLowerCase()
-  if (!lower.includes("<html") && !lower.includes("<!doctype")) {
+  // Cut the document out of the reply rather than testing that one is in there
+  // somewhere: any commentary the model wrapped around it would otherwise be
+  // rendered onto the canvas as visible text. See htmlDocument.ts.
+  const extracted = extractHtmlDocument(raw)
+  if (!extracted) {
+    const trimmed = raw.trim()
     throw new Error(
-      `Claude CLI did not return an HTML document (got ${html.length} chars starting: "${html.slice(0, 80)}")`,
+      `Claude CLI did not return an HTML document (got ${trimmed.length} chars starting: "${trimmed.slice(0, 80)}")`,
     )
   }
+  if (extracted.discarded) {
+    console.warn(
+      `[designAgentCli] discarded ${extracted.discarded.length} chars of non-HTML text around the document: ` +
+        JSON.stringify(extracted.discarded.slice(0, 300)),
+    )
+  }
+  let html = extracted.html
 
   // Re-inline any externalized assets (stripped before the prompt) so the render
   // matches the original template. Warn if the model dropped a placeholder.
